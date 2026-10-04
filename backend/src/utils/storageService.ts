@@ -1,5 +1,6 @@
 import { cloudinary } from '../config/cloudinary';
 import { UploadApiResponse } from 'cloudinary';
+import { Response } from 'express';
 
 /**
  * Determines whether a storagePath value stored in the database is a
@@ -54,4 +55,53 @@ export function uploadToCloudinary(
 
     uploadStream.end(buffer);
   });
+}
+
+/**
+ * Fetches a Cloudinary file server-side and pipes it back to the Express
+ * response as a download attachment.
+ *
+ * Why proxy instead of redirect:
+ * - The frontend may be on a different origin than the backend. A root-relative
+ *   download URL resolves to the frontend host, which doesn't handle /api routes,
+ *   so the React Router wildcard catches it and sends the user to the dashboard.
+ * - Even with an absolute backend URL, res.redirect() to Cloudinary can be
+ *   blocked by cross-origin redirect policies on the browser side.
+ * - Proxying keeps the JWT entirely inside the API call (never in a browser
+ *   address bar or server log for the storage provider) and ensures the browser
+ *   always receives a real file download regardless of deployment topology.
+ */
+export async function proxyCloudinaryDownload(
+  cloudinaryUrl: string,
+  originalName: string,
+  contentType: string,
+  res: Response
+): Promise<void> {
+  const upstream = await fetch(cloudinaryUrl);
+
+  if (!upstream.ok) {
+    throw new Error(`Cloudinary fetch failed: ${upstream.status} ${upstream.statusText}`);
+  }
+
+  // Sanitise the filename so it is safe for the Content-Disposition header
+  const safeFilename = originalName.replace(/[^\w.\-() ]/g, '_');
+
+  res.setHeader('Content-Type', contentType || 'application/octet-stream');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`
+  );
+
+  const length = upstream.headers.get('content-length');
+  if (length) res.setHeader('Content-Length', length);
+
+  // Node 18+ fetch returns a Web Streams ReadableStream; pipe it to Express
+  if (upstream.body) {
+    const { Readable } = await import('stream');
+    Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]).pipe(res);
+  } else {
+    // Fallback: buffer the response
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    res.send(buffer);
+  }
 }

@@ -13,7 +13,7 @@ import {
 import { generateOfferNumber } from '../utils/offerNumber';
 import { createAuditLog } from '../utils/auditLogger';
 import { Prisma, OfferStatus } from '@prisma/client';
-import { uploadToCloudinary, isCloudinaryUrl } from '../utils/storageService';
+import { uploadToCloudinary, isCloudinaryUrl, proxyCloudinaryDownload } from '../utils/storageService';
 import path from 'path';
 import fs from 'fs';
 
@@ -559,16 +559,23 @@ export async function downloadDocument(req: AuthRequest, res: Response, next: Ne
 
     if (!document) { sendError(res, 'Document not found', 404); return; }
 
-    // New records: storagePath is a Cloudinary HTTPS URL — redirect the client
+    // New records: storagePath is a Cloudinary HTTPS URL.
+    // Proxy the bytes back so the browser receives a real file download
+    // regardless of deployment topology (avoids cross-origin redirect issues
+    // and keeps the JWT inside the API call, not in a Cloudinary server log).
     if (isCloudinaryUrl(document.storagePath)) {
-      res.redirect(document.storagePath);
+      await proxyCloudinaryDownload(
+        document.storagePath,
+        document.originalName,
+        document.fileType,
+        res
+      );
       return;
     }
 
-    // Legacy records: storagePath is a local filesystem path (pre-Cloudinary)
-    // These will only be accessible when the file still exists on disk
-    // (local dev). On Railway they will return 404 — this is expected for
-    // old records that were uploaded before Cloudinary was configured.
+    // Legacy records: storagePath is a local filesystem path (pre-Cloudinary).
+    // Works in local dev; returns a clear 404 on Railway where the ephemeral
+    // filesystem no longer has the file.
     const filePath = path.resolve(document.storagePath);
     if (!fs.existsSync(filePath)) {
       sendError(res, 'File not found on storage. This document was uploaded before cloud storage was configured.', 404);

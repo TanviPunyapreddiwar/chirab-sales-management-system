@@ -50,11 +50,15 @@ export const offersApi = {
   },
 
   getDocumentDownloadUrl: (offerId: string, docId: string) => {
-    // Use a root-relative path so the Vite dev proxy forwards it correctly,
-    // and so production deployments behind a reverse proxy also work.
-    // The token is appended as a query param because browser <a> navigation
-    // cannot set custom Authorization headers.
+    // Build an absolute URL to the backend so the browser's <a href> navigation
+    // reaches the backend host directly, not the frontend SPA host.
+    // (A root-relative path like /api/... resolves to the frontend origin in
+    // production, where React Router's wildcard catches it and redirects to /.)
+    //
+    // The token is appended as a query param because browser anchor-tag
+    // navigation cannot set custom Authorization headers.
+    const base = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api';
     const token = localStorage.getItem('token') ?? '';
-    return `/api/offers/${offerId}/documents/${docId}/download?token=${encodeURIComponent(token)}`;
+    return `${base}/offers/${offerId}/documents/${docId}/download?token=${encodeURIComponent(token)}`;
   },
 };
