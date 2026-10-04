@@ -1,0 +1,239 @@
+// Prisma schema for Chirab Sales Offer Management System
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGEMENT
+  SALES
+  APPROVER
+}
+
+enum OfferStatus {
+  DRAFT
+  SUBMITTED_FOR_APPROVAL
+  APPROVED
+  SENT_TO_CUSTOMER
+  FOLLOW_UP_DUE
+  UNDER_NEGOTIATION
+  REVISED_OFFER
+  PO_EXPECTED
+  WON
+  LOST
+  CANCELLED
+  ON_HOLD
+  NO_RESPONSE
+}
+
+enum FollowUpMethod {
+  PHONE
+  EMAIL
+  WHATSAPP
+  MEETING
+  OTHER
+}
+
+enum ApprovalAction {
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(SALES)
+  employeeCode String?  @unique
+  phone        String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  offersCreated    Offer[]         @relation("CreatedBy")
+  offersAssigned   Offer[]         @relation("Salesperson")
+  revisions        OfferRevision[]
+  followUps        FollowUp[]
+  approvals        OfferApproval[]
+  documents        OfferDocument[]
+  auditLogs        AuditLog[]
+
+  @@map("users")
+}
+
+model Customer {
+  id            String   @id @default(uuid())
+  customerCode  String   @unique
+  companyName   String
+  contactPerson String?
+  email         String?
+  phone         String?
+  address       String?
+  city          String?
+  state         String?
+  country       String   @default("India")
+  industry      String?
+  gstNumber     String?
+  notes         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  offers Offer[]
+
+  @@map("customers")
+}
+
+model Offer {
+  id                  String      @id @default(uuid())
+  offerNumber         String      @unique
+  customerId          String
+  salespersonId       String
+  contactPerson       String?
+  customerRfqNumber   String?
+  businessDivision    String?
+  product             String
+  applicationDescription String?
+  currency            String      @default("INR")
+  offerValue          Decimal     @db.Decimal(15, 2)
+  status              OfferStatus @default(DRAFT)
+  revisionNumber      Int         @default(0)
+  offerDate           DateTime    @default(now())
+  nextFollowUpDate    DateTime?
+  validityDays        Int         @default(30)
+  source              String?
+  commercialRemarks   String?
+  createdById         String
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  // Relations
+  customer     Customer        @relation(fields: [customerId], references: [id])
+  salesperson  User            @relation("Salesperson", fields: [salespersonId], references: [id])
+  createdBy    User            @relation("CreatedBy", fields: [createdById], references: [id])
+  revisions    OfferRevision[]
+  followUps    FollowUp[]
+  approvals    OfferApproval[]
+  documents    OfferDocument[]
+
+  @@index([customerId])
+  @@index([salespersonId])
+  @@index([status])
+  @@index([offerDate])
+  @@map("offers")
+}
+
+model OfferRevision {
+  id               String      @id @default(uuid())
+  offerId          String
+  revisionNumber   Int
+  offerValue       Decimal     @db.Decimal(15, 2)
+  currency         String      @default("INR")
+  status           OfferStatus
+  description      String?
+  commercialRemarks String?
+  changeReason     String?
+  createdById      String
+  createdAt        DateTime    @default(now())
+
+  // Relations
+  offer     Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  createdBy User  @relation(fields: [createdById], references: [id])
+
+  @@unique([offerId, revisionNumber])
+  @@index([offerId])
+  @@map("offer_revisions")
+}
+
+model FollowUp {
+  id               String         @id @default(uuid())
+  offerId          String
+  followUpDate     DateTime
+  method           FollowUpMethod @default(EMAIL)
+  customerResponse String?
+  remarks          String?
+  nextFollowUpDate DateTime?
+  createdById      String
+  createdAt        DateTime       @default(now())
+
+  // Relations
+  offer     Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  createdBy User  @relation(fields: [createdById], references: [id])
+
+  @@index([offerId])
+  @@index([nextFollowUpDate])
+  @@map("follow_ups")
+}
+
+model OfferApproval {
+  id         String         @id @default(uuid())
+  offerId    String
+  approverId String
+  action     ApprovalAction
+  comments   String?
+  createdAt  DateTime       @default(now())
+
+  // Relations
+  offer    Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  approver User  @relation(fields: [approverId], references: [id])
+
+  @@index([offerId])
+  @@map("offer_approvals")
+}
+
+model OfferDocument {
+  id          String   @id @default(uuid())
+  offerId     String
+  fileName    String
+  originalName String
+  fileType    String
+  fileSize    Int
+  storagePath String
+  uploadedById String
+  createdAt   DateTime @default(now())
+
+  // Relations
+  offer      Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  uploadedBy User  @relation(fields: [uploadedById], references: [id])
+
+  @@index([offerId])
+  @@map("offer_documents")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  oldValue   Json?
+  newValue   Json?
+  ipAddress  String?
+  timestamp  DateTime @default(now())
+
+  // Relations
+  user  User?  @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+model OfferSequence {
+  id       String @id @default(uuid())
+  year     String @unique  // e.g., "26-27"
+  sequence Int    @default(0)
+
+  @@map("offer_sequences")
+}
