@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import {
   getOffers,
@@ -18,9 +19,15 @@ import {
 } from '../controllers/offer.controller';
 import { authenticate } from '../middleware/auth';
 
+const uploadDirectory = path.resolve(
+  process.env.STORAGE_LOCAL_PATH || './uploads/documents'
+);
+
+fs.mkdirSync(uploadDirectory, { recursive: true });
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    cb(null, process.env.STORAGE_LOCAL_PATH || './uploads/documents');
+    cb(null, uploadDirectory);
   },
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname);
