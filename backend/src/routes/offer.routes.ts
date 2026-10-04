@@ -1,8 +1,5 @@
 import { Router } from 'express';
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import { v4 as uuidv4 } from 'uuid';
 import {
   getOffers,
   getOfferById,
@@ -18,26 +15,20 @@ import {
   downloadDocument,
 } from '../controllers/offer.controller';
 import { authenticate } from '../middleware/auth';
+import { configureCloudinary } from '../config/cloudinary';
 
-const uploadDirectory = path.resolve(
-  process.env.STORAGE_LOCAL_PATH || './uploads/documents'
-);
+// Initialise Cloudinary once when this module is first loaded
+configureCloudinary();
 
-fs.mkdirSync(uploadDirectory, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadDirectory);
-  },
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
-  },
-});
-
+/**
+ * Use memoryStorage so Multer holds the file in a Buffer.
+ * The buffer is then uploaded to Cloudinary by the controller.
+ * This avoids any dependency on a writable filesystem, which is
+ * ephemeral on Railway (and was the cause of the ENOENT errors).
+ */
 const upload = multer({
-  storage,
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
   fileFilter: (_req, file, cb) => {
     const allowed = [
       'application/pdf',

@@ -13,6 +13,7 @@ import {
 import { generateOfferNumber } from '../utils/offerNumber';
 import { createAuditLog } from '../utils/auditLogger';
 import { Prisma, OfferStatus } from '@prisma/client';
+import { uploadToCloudinary, isCloudinaryUrl } from '../utils/storageService';
 import path from 'path';
 import fs from 'fs';
 
@@ -515,14 +516,20 @@ export async function uploadDocument(req: AuthRequest, res: Response, next: Next
     const offer = await prisma.offer.findUnique({ where: { id } });
     if (!offer) { sendError(res, 'Offer not found', 404); return; }
 
+    // Upload buffer to Cloudinary (memoryStorage — no disk write)
+    const { storagePath, cloudinaryPublicId } = await uploadToCloudinary(
+      req.file.buffer,
+      req.file.originalname
+    );
+
     const document = await prisma.offerDocument.create({
       data: {
         offerId: id,
-        fileName: req.file.filename,
+        fileName: cloudinaryPublicId,   // Cloudinary public_id
         originalName: req.file.originalname,
         fileType: req.file.mimetype,
         fileSize: req.file.size,
-        storagePath: req.file.path,
+        storagePath,                    // Cloudinary secure_url
         uploadedById: req.user.userId,
       },
       include: { uploadedBy: { select: { id: true, name: true } } },
@@ -552,9 +559,20 @@ export async function downloadDocument(req: AuthRequest, res: Response, next: Ne
 
     if (!document) { sendError(res, 'Document not found', 404); return; }
 
+    // New records: storagePath is a Cloudinary HTTPS URL — redirect the client
+    if (isCloudinaryUrl(document.storagePath)) {
+      res.redirect(document.storagePath);
+      return;
+    }
+
+    // Legacy records: storagePath is a local filesystem path (pre-Cloudinary)
+    // These will only be accessible when the file still exists on disk
+    // (local dev). On Railway they will return 404 — this is expected for
+    // old records that were uploaded before Cloudinary was configured.
     const filePath = path.resolve(document.storagePath);
     if (!fs.existsSync(filePath)) {
-      sendError(res, 'File not found on storage', 404); return;
+      sendError(res, 'File not found on storage. This document was uploaded before cloud storage was configured.', 404);
+      return;
     }
 
     res.download(filePath, document.originalName);
