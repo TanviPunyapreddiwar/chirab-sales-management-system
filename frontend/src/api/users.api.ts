@@ -16,4 +16,7 @@ export const usersApi = {
 
   update: (id: string, data: Partial<User>) =>
     apiClient.put<ApiResponse<User>>(`/users/${id}`, data),
+
+  resetPassword: (id: string, password: string) =>
+    apiClient.post<ApiResponse<null>>(`/users/${id}/reset-password`, { password }),
 };

@@ -3,16 +3,18 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Search, Edit, ToggleLeft, ToggleRight, Loader2, Shield, User } from 'lucide-react';
+import { Plus, Search, Edit, ToggleLeft, ToggleRight, Loader2, Shield, User, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { usersApi } from '../../api/users.api';
 import { PageLoader } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { Pagination } from '../../components/ui/Pagination';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { handleApiError } from '../../api/client';
 import { formatDate } from '../../utils/format';
 import { useDebounce } from '../../hooks/useDebounce';
+import { useAuth } from '../../contexts/AuthContext';
 import { Role, User as UserType } from '../../types';
 import clsx from 'clsx';
 
@@ -41,15 +43,28 @@ const editSchema = z.object({
   isActive: z.boolean(),
 });
 
+const resetPasswordSchema = z.object({
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  confirmPassword: z.string().min(1, 'Please confirm the password'),
+}).refine((d) => d.password === d.confirmPassword, {
+  message: 'Passwords do not match',
+  path: ['confirmPassword'],
+});
+
 type CreateForm = z.infer<typeof createSchema>;
 type EditForm = z.infer<typeof editSchema>;
+type ResetPasswordForm = z.infer<typeof resetPasswordSchema>;
 
 export function UsersPage() {
   const queryClient = useQueryClient();
+  const { user: currentUser } = useAuth();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState<'create' | 'edit' | null>(null);
   const [editTarget, setEditTarget] = useState<UserType | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const debouncedSearch = useDebounce(search, 400);
 
@@ -81,6 +96,20 @@ export function UsersPage() {
     onError: handleApiError,
   });
 
+  const resetMutation = useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) =>
+      usersApi.resetPassword(id, password),
+    onSuccess: () => {
+      toast.success('Password reset successfully');
+      resetForm.reset();
+      setShowResetConfirm(false);
+    },
+    onError: (err) => {
+      handleApiError(err);
+      setShowResetConfirm(false);
+    },
+  });
+
   const createForm = useForm<CreateForm>({
     resolver: zodResolver(createSchema),
     defaultValues: { role: 'SALES' },
@@ -88,6 +117,10 @@ export function UsersPage() {
 
   const editForm = useForm<EditForm>({
     resolver: zodResolver(editSchema),
+  });
+
+  const resetForm = useForm<ResetPasswordForm>({
+    resolver: zodResolver(resetPasswordSchema),
   });
 
   const openEdit = (user: UserType) => {
@@ -100,6 +133,9 @@ export function UsersPage() {
       phone: user.phone || '',
       isActive: user.isActive,
     });
+    resetForm.reset();
+    setShowNewPassword(false);
+    setShowConfirmPassword(false);
     setModal('edit');
   };
 
@@ -311,7 +347,96 @@ export function UsersPage() {
             </button>
           </div>
         </form>
+
+        {/* Admin-only Reset Password section — separated from profile edit */}
+        {currentUser?.role === 'ADMIN' && editTarget && editTarget.id !== currentUser.id && (
+          <div className="mx-6 mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-amber-600 shrink-0" />
+              <p className="text-sm font-semibold text-amber-800">Admin: Reset User Password</p>
+            </div>
+            <p className="text-xs text-amber-700">
+              Set a new temporary password for <strong>{editTarget.name}</strong>. The user should change it after next login.
+            </p>
+            <form
+              onSubmit={resetForm.handleSubmit(() => setShowResetConfirm(true))}
+              className="space-y-3"
+            >
+              <div>
+                <label className="label">New Password *</label>
+                <div className="relative">
+                  <input
+                    {...resetForm.register('password')}
+                    type={showNewPassword ? 'text' : 'password'}
+                    className={`input pr-10 ${resetForm.formState.errors.password ? 'input-error' : ''}`}
+                    placeholder="Min. 8 characters"
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    tabIndex={-1}
+                  >
+                    {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {resetForm.formState.errors.password && (
+                  <p className="error-text">{resetForm.formState.errors.password.message}</p>
+                )}
+              </div>
+              <div>
+                <label className="label">Confirm New Password *</label>
+                <div className="relative">
+                  <input
+                    {...resetForm.register('confirmPassword')}
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    className={`input pr-10 ${resetForm.formState.errors.confirmPassword ? 'input-error' : ''}`}
+                    placeholder="Repeat the new password"
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    tabIndex={-1}
+                  >
+                    {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {resetForm.formState.errors.confirmPassword && (
+                  <p className="error-text">{resetForm.formState.errors.confirmPassword.message}</p>
+                )}
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={resetMutation.isPending}
+                  className="btn-secondary border-amber-300 text-amber-800 hover:bg-amber-100"
+                >
+                  {resetMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  <Shield className="h-4 w-4" />
+                  Reset Password
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </Modal>
+
+      {/* Confirm dialog for password reset */}
+      <ConfirmDialog
+        isOpen={showResetConfirm}
+        onClose={() => setShowResetConfirm(false)}
+        onConfirm={() => {
+          const { password } = resetForm.getValues();
+          resetMutation.mutate({ id: editTarget!.id, password });
+        }}
+        title="Confirm Password Reset"
+        message={`Reset the password for ${editTarget?.name}? They will need to use the new password on their next login.`}
+        confirmLabel="Yes, Reset Password"
+        isDestructive
+      />
     </div>
   );
 }

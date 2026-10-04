@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { AuthRequest } from '../types';
 import { prisma } from '../config/prisma';
 import { sendSuccess, sendError, getPagination, buildPaginationMeta } from '../utils/response';
-import { createUserSchema, updateUserSchema } from '../validators/user.validator';
+import { createUserSchema, updateUserSchema, resetPasswordSchema } from '../validators/user.validator';
 import { createAuditLog } from '../utils/auditLogger';
 import { Prisma } from '@prisma/client';
 
@@ -194,6 +194,52 @@ export async function updateUser(req: AuthRequest, res: Response, next: NextFunc
     });
 
     sendSuccess(res, user, 'User updated successfully');
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function resetPassword(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) { sendError(res, 'Not authenticated', 401); return; }
+
+    const { id } = req.params;
+
+    // An Admin must use the self-service change-password endpoint for their own account
+    if (id === req.user.userId) {
+      sendError(res, 'Use the change-password endpoint to update your own password', 400);
+      return;
+    }
+
+    const parsed = resetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      sendError(res, 'Validation failed', 400, parsed.error.flatten().fieldErrors as Record<string, string[]>);
+      return;
+    }
+
+    const target = await prisma.user.findUnique({ where: { id } });
+    if (!target) {
+      sendError(res, 'User not found', 404);
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.password, 12);
+
+    await prisma.user.update({
+      where: { id },
+      data: { passwordHash },
+    });
+
+    // Audit log — password is intentionally excluded from oldValue/newValue
+    await createAuditLog({
+      userId: req.user.userId,
+      action: 'USER_PASSWORD_RESET',
+      entityType: 'User',
+      entityId: id,
+      newValue: { resetBy: req.user.email, targetUser: target.email },
+    });
+
+    sendSuccess(res, null, 'User password reset successfully');
   } catch (error) {
     next(error);
   }
